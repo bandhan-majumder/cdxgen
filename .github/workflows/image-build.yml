@@ -40,6 +40,11 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: save private key to file
+        run: |
+          echo $SBOM_SIGN_PRIVATE_KEY | base64 -d > $GITHUB_WORKSPACE/private.key
+        env:
+          SBOM_SIGN_PRIVATE_KEY: ${{ secrets.SBOM_SIGN_PRIVATE_KEY }}
       # Base image
       - name: Extract metadata (tags, labels) for Docker base-image
         id: base-metadata
@@ -57,6 +62,20 @@ jobs:
           push: true
           tags: ${{ steps.base-metadata.outputs.tags }}
           labels: ${{ steps.base-metadata.outputs.labels }}
+      - name: Attach cdx sbom to base
+        run: |
+          mkdir -p $RUNNER_TEMP/cdxgen-sboms
+          corepack pnpm install --config.strict-dep-builds=true --package-import-method copy --frozen-lockfile
+          node bin/cdxgen.js -t docker -o sbom-oci-base-image.cdx.json ${{ fromJSON(steps.base-metadata.outputs.json).tags[0] }}
+          node bin/verify.js -i sbom-oci-base-image.cdx.json --public-key contrib/bom-signer/public.key
+          oras attach --artifact-type sbom/cyclonedx ${{ fromJSON(steps.base-metadata.outputs.json).tags[0] }} ./sbom-oci-base-image.cdx.json:application/json
+          oras discover --format tree ${{ fromJSON(steps.base-metadata.outputs.json).tags[0] }}
+          node bin/verify.js -i ${{ fromJSON(steps.base-metadata.outputs.json).tags[0] }} --public-key contrib/bom-signer/public.key
+        continue-on-error: true
+        env:
+          SBOM_SIGN_ALGORITHM: RS512
+          SBOM_SIGN_PRIVATE_KEY: ${{ github.workspace }}/private.key
+          CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-sboms
       # cdxgen image
       - name: Extract metadata (tags, labels) for Docker cdxgen-image
         id: cdxgen-metadata
@@ -81,6 +100,21 @@ jobs:
             ${{ fromJSON(inputs.image).cdxgen-image.additional-image2 && format('{0}/{1}/{2}:{3}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image2, env.TAG) }}
             ${{ fromJSON(inputs.image).cdxgen-image.additional-image3 && format('{0}/{1}/{2}:{3}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image3, env.TAG) }}
           labels: ${{ steps.cdxgen-metadata.outputs.labels }}
+      - name: Attach cdx sbom for master
+        if: github.ref == 'refs/heads/master'
+        run: |
+          mkdir -p $RUNNER_TEMP/cdxgen-sboms
+          corepack pnpm install --config.strict-dep-builds=true --package-import-method copy --frozen-lockfile
+          node bin/cdxgen.js -t docker -o sbom-oci-image.cdx.json ${{ env.REPO }}/${{ env.TEAM }}/cdxgen${{ fromJSON(inputs.image).distro && format('-{0}', fromJSON(inputs.image).distro) }}-${{ fromJSON(inputs.image).lang }}:${{ env.TAG }}
+          node bin/verify.js -i sbom-oci-image.cdx.json --public-key contrib/bom-signer/public.key
+          oras attach --artifact-type sbom/cyclonedx ${{ env.REPO }}/${{ env.TEAM }}/cdxgen${{ fromJSON(inputs.image).distro && format('-{0}', fromJSON(inputs.image).distro) }}-${{ fromJSON(inputs.image).lang }}:${{ env.TAG }} ./sbom-oci-image.cdx.json:application/json
+          oras discover --format tree ${{ env.REPO }}/${{ env.TEAM }}/cdxgen${{ fromJSON(inputs.image).distro && format('-{0}', fromJSON(inputs.image).distro) }}-${{ fromJSON(inputs.image).lang }}:${{ env.TAG }}
+          node bin/verify.js -i ${{ env.REPO }}/${{ env.TEAM }}/cdxgen${{ fromJSON(inputs.image).distro && format('-{0}', fromJSON(inputs.image).distro) }}-${{ fromJSON(inputs.image).lang }}:${{ env.TAG }} --public-key contrib/bom-signer/public.key
+        continue-on-error: true
+        env:
+          SBOM_SIGN_ALGORITHM: RS512
+          SBOM_SIGN_PRIVATE_KEY: ${{ github.workspace }}/private.key
+          CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-sboms
       - name: Build and push Docker cdxgen-image for tag
         uses: docker/build-push-action@v5
         if: ${{ startsWith(github.ref, 'refs/tags/') && ! fromJSON(inputs.image).cdxgen-image.skip-tags }}
@@ -91,27 +125,8 @@ jobs:
           push: true
           tags: ${{ steps.cdxgen-metadata.outputs.tags }}
           labels: ${{ steps.cdxgen-metadata.outputs.labels }}
-      - name: save private key to file
-        run: |
-          echo $SBOM_SIGN_PRIVATE_KEY | base64 -d > $GITHUB_WORKSPACE/private.key
-        env:
-          SBOM_SIGN_PRIVATE_KEY: ${{ secrets.SBOM_SIGN_PRIVATE_KEY }}
-      - name: Attach cdx sbom to base
-        run: |
-          mkdir -p $RUNNER_TEMP/cdxgen-sboms
-          corepack pnpm install --config.strict-dep-builds=true --package-import-method copy --frozen-lockfile
-          node bin/cdxgen.js -t docker -o sbom-oci-base-image.cdx.json ${{ fromJSON(steps.base-metadata.outputs.json).tags[0] }}
-          node bin/verify.js -i sbom-oci-base-image.cdx.json --public-key contrib/bom-signer/public.key
-          oras attach --artifact-type sbom/cyclonedx ${{ fromJSON(steps.base-metadata.outputs.json).tags[0] }} ./sbom-oci-base-image.cdx.json:application/json
-          oras discover --format tree ${{ fromJSON(steps.base-metadata.outputs.json).tags[0] }}
-          node bin/verify.js -i ${{ fromJSON(steps.base-metadata.outputs.json).tags[0] }} --public-key contrib/bom-signer/public.key
-        continue-on-error: true
-        if: github.ref == 'refs/heads/master'
-        env:
-          SBOM_SIGN_ALGORITHM: RS512
-          SBOM_SIGN_PRIVATE_KEY: ${{ github.workspace }}/private.key
-          CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-sboms
-      - name: Attach cdx sbom
+      - name: Attach cdx sbom for tag
+        if: ${{ startsWith(github.ref, 'refs/tags/') && ! fromJSON(inputs.image).cdxgen-image.skip-tags }}
         run: |
           mkdir -p $RUNNER_TEMP/cdxgen-sboms
           corepack pnpm install --config.strict-dep-builds=true --package-import-method copy --frozen-lockfile
@@ -121,7 +136,6 @@ jobs:
           oras discover --format tree ${{ fromJSON(steps.cdxgen-metadata.outputs.json).tags[0] }}
           node bin/verify.js -i ${{ fromJSON(steps.cdxgen-metadata.outputs.json).tags[0] }} --public-key contrib/bom-signer/public.key
         continue-on-error: true
-        if: ${{ startsWith(github.ref, 'refs/tags/') && ! fromJSON(inputs.image).cdxgen-image.skip-tags }}
         env:
           SBOM_SIGN_ALGORITHM: RS512
           SBOM_SIGN_PRIVATE_KEY: ${{ github.workspace }}/private.key
