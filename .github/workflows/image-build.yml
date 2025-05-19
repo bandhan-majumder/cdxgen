@@ -11,7 +11,7 @@ on:
 
 env:
   REPO: ghcr.io
-  TAG: v11
+  TAG: test-generate_attach_sbom
   TEAM: cyclonedx
 
 jobs:
@@ -124,7 +124,7 @@ jobs:
             ${{ fromJSON(inputs.image).cdxgen-image.additional-image3 && format('{0}/{1}/{2}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image3) || '' }}
       - name: Build and push Docker cdxgen-image for master
         uses: docker/build-push-action@v5
-        if: github.ref == 'refs/heads/master'
+#        if: github.ref == 'refs/heads/master'
         with:
           context: .
           file: ci/base-images/cdxgen/${{ fromJSON(inputs.image).distro }}/Dockerfile.${{ fromJSON(inputs.image).lang }}
@@ -137,7 +137,7 @@ jobs:
             ${{ fromJSON(inputs.image).cdxgen-image.additional-image3 && format('{0}/{1}/{2}:{3}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image3, env.TAG) }}
           labels: ${{ steps.cdxgen-metadata.outputs.labels }}
       - name: Export cdxgen-image amd64 for master
-        if: github.ref == 'refs/heads/master'
+#        if: github.ref == 'refs/heads/master'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -147,7 +147,7 @@ jobs:
           tags: ${{ env.REPO }}/${{ env.TEAM }}/cdxgen${{ fromJSON(inputs.image).distro && format('-{0}', fromJSON(inputs.image).distro) }}-${{ fromJSON(inputs.image).lang }}:${{ env.TAG }}
           labels: ${{ steps.cdxgen-metadata.outputs.labels }}
       - name: Attach cdx sbom amd64 for master
-        if: github.ref == 'refs/heads/master'
+#        if: github.ref == 'refs/heads/master'
         run: |
           node bin/cdxgen.js -t docker -o sbom-oci-image.cdx.json ${{ env.REPO }}/${{ env.TEAM }}/cdxgen${{ fromJSON(inputs.image).distro && format('-{0}', fromJSON(inputs.image).distro) }}-${{ fromJSON(inputs.image).lang }}:${{ env.TAG }}
           node bin/verify.js -i sbom-oci-image.cdx.json --public-key contrib/bom-signer/public.key
@@ -161,7 +161,8 @@ jobs:
           SBOM_SIGN_PRIVATE_KEY: ${{ github.workspace }}/private.key
           CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-sboms
       - name: Export cdxgen-image arm64 for master
-        if: ${{ github.ref == 'refs/heads/master' && ! fromJSON(inputs.image).skip-arm }}
+#        if: ${{ github.ref == 'refs/heads/master' && ! fromJSON(inputs.image).skip-arm }}
+        if: ${{ ! fromJSON(inputs.image).skip-arm }}
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -171,7 +172,8 @@ jobs:
           tags: ${{ env.REPO }}/${{ env.TEAM }}/cdxgen${{ fromJSON(inputs.image).distro && format('-{0}', fromJSON(inputs.image).distro) }}-${{ fromJSON(inputs.image).lang }}:${{ env.TAG }}
           labels: ${{ steps.cdxgen-metadata.outputs.labels }}
       - name: Attach cdx sbom arm64 for master
-        if: ${{ github.ref == 'refs/heads/master' && ! fromJSON(inputs.image).skip-arm }}
+#        if: ${{ github.ref == 'refs/heads/master' && ! fromJSON(inputs.image).skip-arm }}
+        if: ${{ ! fromJSON(inputs.image).skip-arm }}
         run: |
           node bin/cdxgen.js -t docker -o sbom-oci-image.cdx.json ${{ env.REPO }}/${{ env.TEAM }}/cdxgen${{ fromJSON(inputs.image).distro && format('-{0}', fromJSON(inputs.image).distro) }}-${{ fromJSON(inputs.image).lang }}:${{ env.TAG }}
           node bin/verify.js -i sbom-oci-image.cdx.json --public-key contrib/bom-signer/public.key
