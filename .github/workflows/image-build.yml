@@ -40,15 +40,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Save private key to file
-        run: |
-          echo $SBOM_SIGN_PRIVATE_KEY | base64 -d > $GITHUB_WORKSPACE/private.key
-        env:
-          SBOM_SIGN_PRIVATE_KEY: ${{ secrets.SBOM_SIGN_PRIVATE_KEY }}
-      - name: Setup for cdxgen-sboms
-        run: |
-          mkdir -p $RUNNER_TEMP/cdxgen-sboms
-          corepack pnpm install --config.strict-dep-builds=true --package-import-method copy --frozen-lockfile
+
       # Base image
       - name: Extract metadata (tags, labels) for Docker base-image
         id: base-metadata
@@ -66,6 +58,52 @@ jobs:
           push: true
           tags: ${{ steps.base-metadata.outputs.tags }}
           labels: ${{ steps.base-metadata.outputs.labels }}
+
+      # cdxgen image
+      - name: Extract metadata (tags, labels) for Docker cdxgen-image
+        id: cdxgen-metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REPO }}/${{ env.TEAM }}/cdxgen${{ fromJSON(inputs.image).distro && format('-{0}', fromJSON(inputs.image).distro) }}-${{ fromJSON(inputs.image).lang }}
+            ${{ fromJSON(inputs.image).cdxgen-image.additional-image && format('{0}/{1}/{2}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image) || '' }}
+            ${{ fromJSON(inputs.image).cdxgen-image.additional-image2 && format('{0}/{1}/{2}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image2) || '' }}
+            ${{ fromJSON(inputs.image).cdxgen-image.additional-image3 && format('{0}/{1}/{2}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image3) || '' }}
+      - name: Build and push Docker cdxgen-image for master
+        uses: docker/build-push-action@v5
+#        if: github.ref == 'refs/heads/master'
+        with:
+          context: .
+          file: ci/base-images/cdxgen/${{ fromJSON(inputs.image).distro }}/Dockerfile.${{ fromJSON(inputs.image).lang }}
+          platforms: linux/amd64${{ ! fromJSON(inputs.image).skip-arm && ',linux/arm64' || '' }}
+          push: true
+          tags: |
+            ${{ env.REPO }}/${{ env.TEAM }}/cdxgen${{ fromJSON(inputs.image).distro && format('-{0}', fromJSON(inputs.image).distro) }}-${{ fromJSON(inputs.image).lang }}:${{ env.TAG }}
+            ${{ fromJSON(inputs.image).cdxgen-image.additional-image && format('{0}/{1}/{2}:{3}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image, env.TAG) }}
+            ${{ fromJSON(inputs.image).cdxgen-image.additional-image2 && format('{0}/{1}/{2}:{3}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image2, env.TAG) }}
+            ${{ fromJSON(inputs.image).cdxgen-image.additional-image3 && format('{0}/{1}/{2}:{3}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image3, env.TAG) }}
+          labels: ${{ steps.cdxgen-metadata.outputs.labels }}
+      - name: Build and push Docker cdxgen-image for tag
+        uses: docker/build-push-action@v5
+        if: ${{ startsWith(github.ref, 'refs/tags/') && ! fromJSON(inputs.image).cdxgen-image.skip-tags }}
+        with:
+          context: .
+          file: ci/base-images/cdxgen/${{ fromJSON(inputs.image).distro }}/Dockerfile.${{ fromJSON(inputs.image).lang }}
+          platforms: linux/amd64${{ ! fromJSON(inputs.image).skip-arm && ',linux/arm64' || '' }}
+          push: true
+          tags: ${{ steps.cdxgen-metadata.outputs.tags }}
+          labels: ${{ steps.cdxgen-metadata.outputs.labels }}
+
+      # Generate & attach SBOMs
+      - name: Prepare
+        run: |
+          mkdir -p $RUNNER_TEMP/cdxgen-sboms
+          corepack pnpm install --config.strict-dep-builds=true --package-import-method copy --frozen-lockfile
+          echo $SBOM_SIGN_PRIVATE_KEY | base64 -d > $GITHUB_WORKSPACE/private.key
+        env:
+          SBOM_SIGN_PRIVATE_KEY: ${{ secrets.SBOM_SIGN_PRIVATE_KEY }}
+
+      # Base image
       - name: Export base-image adm64
         uses: docker/build-push-action@v5
         with:
@@ -112,30 +150,8 @@ jobs:
           SBOM_SIGN_ALGORITHM: RS512
           SBOM_SIGN_PRIVATE_KEY: ${{ github.workspace }}/private.key
           CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-sboms
+
       # cdxgen image
-      - name: Extract metadata (tags, labels) for Docker cdxgen-image
-        id: cdxgen-metadata
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            ${{ env.REPO }}/${{ env.TEAM }}/cdxgen${{ fromJSON(inputs.image).distro && format('-{0}', fromJSON(inputs.image).distro) }}-${{ fromJSON(inputs.image).lang }}
-            ${{ fromJSON(inputs.image).cdxgen-image.additional-image && format('{0}/{1}/{2}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image) || '' }}
-            ${{ fromJSON(inputs.image).cdxgen-image.additional-image2 && format('{0}/{1}/{2}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image2) || '' }}
-            ${{ fromJSON(inputs.image).cdxgen-image.additional-image3 && format('{0}/{1}/{2}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image3) || '' }}
-      - name: Build and push Docker cdxgen-image for master
-        uses: docker/build-push-action@v5
-#        if: github.ref == 'refs/heads/master'
-        with:
-          context: .
-          file: ci/base-images/cdxgen/${{ fromJSON(inputs.image).distro }}/Dockerfile.${{ fromJSON(inputs.image).lang }}
-          platforms: linux/amd64${{ ! fromJSON(inputs.image).skip-arm && ',linux/arm64' || '' }}
-          push: true
-          tags: |
-            ${{ env.REPO }}/${{ env.TEAM }}/cdxgen${{ fromJSON(inputs.image).distro && format('-{0}', fromJSON(inputs.image).distro) }}-${{ fromJSON(inputs.image).lang }}:${{ env.TAG }}
-            ${{ fromJSON(inputs.image).cdxgen-image.additional-image && format('{0}/{1}/{2}:{3}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image, env.TAG) }}
-            ${{ fromJSON(inputs.image).cdxgen-image.additional-image2 && format('{0}/{1}/{2}:{3}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image2, env.TAG) }}
-            ${{ fromJSON(inputs.image).cdxgen-image.additional-image3 && format('{0}/{1}/{2}:{3}', env.REPO, env.TEAM, fromJSON(inputs.image).cdxgen-image.additional-image3, env.TAG) }}
-          labels: ${{ steps.cdxgen-metadata.outputs.labels }}
       - name: Export cdxgen-image amd64 for master
 #        if: github.ref == 'refs/heads/master'
         uses: docker/build-push-action@v5
@@ -186,16 +202,6 @@ jobs:
           SBOM_SIGN_ALGORITHM: RS512
           SBOM_SIGN_PRIVATE_KEY: ${{ github.workspace }}/private.key
           CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-sboms
-      - name: Build and push Docker cdxgen-image for tag
-        uses: docker/build-push-action@v5
-        if: ${{ startsWith(github.ref, 'refs/tags/') && ! fromJSON(inputs.image).cdxgen-image.skip-tags }}
-        with:
-          context: .
-          file: ci/base-images/cdxgen/${{ fromJSON(inputs.image).distro }}/Dockerfile.${{ fromJSON(inputs.image).lang }}
-          platforms: linux/amd64${{ ! fromJSON(inputs.image).skip-arm && ',linux/arm64' || '' }}
-          push: true
-          tags: ${{ steps.cdxgen-metadata.outputs.tags }}
-          labels: ${{ steps.cdxgen-metadata.outputs.labels }}
       - name: Export cdxgen-image amd64 for tag
         uses: docker/build-push-action@v5
         if: ${{ startsWith(github.ref, 'refs/tags/') && ! fromJSON(inputs.image).cdxgen-image.skip-tags }}
